@@ -1,5 +1,5 @@
-// gomon is a simple file watcher for golang
-// Usage: gomon run <file.go>
+// Package gomon is a simple command line file watcher for Go.
+// Usage: gomon run <file.go> [args]
 
 package main
 
@@ -7,8 +7,10 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"gopkg.in/fsnotify.v1"
@@ -20,6 +22,8 @@ const (
 
 type watch struct {
 	*fsnotify.Watcher
+	cmd  *exec.Cmd
+	args []string
 }
 
 // SubDirectories walks through the path(passed as arg)
@@ -48,7 +52,7 @@ func SubDirectories(p string) []string {
 	return filelist
 }
 
-func (watcher *watch) NewWatcher() {
+func (w *watch) NewWatcher() {
 	wd, err := os.Getwd()
 	if err != nil {
 		log.Fatal(err)
@@ -56,12 +60,12 @@ func (watcher *watch) NewWatcher() {
 
 	list := SubDirectories(wd)
 	for _, dir := range list {
-		watcher.AddFolder(dir)
+		w.AddFolder(dir)
 	}
 }
 
-func (watcher *watch) AddFolder(d string) {
-	err := watcher.Add(d)
+func (w *watch) AddFolder(d string) {
+	err := w.Add(d)
 	if err != nil {
 		log.Println("Error Watching: ", d, err)
 	}
@@ -73,58 +77,106 @@ func Describe(event fsnotify.Event) {
 	desc := ""
 	base := filepath.Base(event.Name)
 	if event.Op&fsnotify.Create == fsnotify.Create {
-		desc = "create file "
+		desc = "create"
 	} else if event.Op&fsnotify.Remove == fsnotify.Remove {
-		desc = "delete file "
+		desc = "delete"
 	} else if event.Op&fsnotify.Write == fsnotify.Write {
-		desc = "modify file "
+		desc = "modify"
 	} else if event.Op&fsnotify.Rename == fsnotify.Rename {
-		desc = "rename file "
+		desc = "rename"
 	} else if event.Op&fsnotify.Chmod == fsnotify.Chmod {
-		desc = "chmod file "
+		desc = "chmod"
 	}
-	log.Println(desc + base)
+	log.Println(desc, base)
 }
 
-func (watcher *watch) Run() {
+func (w *watch) Run() {
 	t := time.Now()
 	for {
 		select {
-		case event := <-watcher.Events:
-			if time.Since(t) >= threshold {
-				t = time.Now()
-				Describe(event)
+		case event := <-w.Events:
+			if time.Since(t) < threshold {
+				break
 			}
-		case err := <-watcher.Errors:
+
+			t = time.Now()
+			f, err := os.Stat(event.Name)
+
+			if err != nil {
+				log.Println("Error watching ", err)
+				break
+			}
+
+			if filepath.Ext(event.Name) == ".go" || filepath.Ext(event.Name) == ".tmpl" || f.IsDir() {
+				Describe(event)
+				w.StartNewProcess()
+			}
+
+		case err := <-w.Errors:
 			log.Println("error:", err)
 		}
 	}
 }
 
-func main() {
-	args := os.Args[1:]
-	cmd := exec.Command("go", args...)
-
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	err := cmd.Start()
-	if err != nil {
-		log.Fatal(err)
+func (w *watch) StartNewProcess() {
+	if w.cmd != nil && !w.cmd.ProcessState.Exited() {
+		w.KillProcess()
 	}
-	log.Println("Starting App")
+
+	w.cmd = exec.Command("go", w.args...)
+
+	w.cmd.Stdout = os.Stdout
+	w.cmd.Stderr = os.Stderr
+
+	err := w.cmd.Start()
+	if err != nil {
+		log.Fatal("Unable to start process", err)
+	}
+
+	err = w.cmd.Wait()
+	if err != nil {
+		log.Println("App Crashed", err)
+	}
+}
+
+func (w *watch) KillProcess() {
+	err := w.cmd.Process.Kill()
+	if err != nil {
+		log.Fatal("Unable to Stop Process", err)
+	}
+}
+
+func main() {
+
+	defer func() {
+		if r := recover(); r != nil {
+			log.Println("Exciting App", r)
+			os.Exit(0)
+		}
+	}()
+
+	args := os.Args[1:]
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGHUP, syscall.SIGQUIT)
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer watcher.Close()
 
-	w := &watch{Watcher: watcher}
+	w := &watch{
+		Watcher: watcher,
+		args:    args,
+	}
+
+	log.Println("Starting App")
+	w.StartNewProcess()
 	w.NewWatcher()
+	defer watcher.Close()
 
 	done := make(chan bool)
 	go w.Run()
+
 	<-done
 }
 
