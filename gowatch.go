@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -22,16 +21,21 @@ const (
 )
 
 type watch struct {
-	mu   sync.Mutex
 	cmd  *exec.Cmd
 	args []string
 	*fsnotify.Watcher
 }
 
-var restart = make(chan bool)
+var (
+	w = &watch{}
 
-// SubDirectories walks through the path(passed as arg)
-// and returns a list of folders recursively
+	restart = make(chan bool)
+	done    = make(chan bool)
+	sig     = make(chan os.Signal)
+)
+
+// SubDirectories walks through the path(recursively)
+// and returns a list of folders
 func SubDirectories(p string) []string {
 	filelist := []string{}
 	err := filepath.Walk(p, func(file string, info os.FileInfo, err error) error {
@@ -64,7 +68,6 @@ func (w *watch) NewWatcher() {
 
 	list := SubDirectories(wd)
 	for _, dir := range list {
-		log.Println(dir)
 		w.AddFolder(dir)
 	}
 }
@@ -72,7 +75,7 @@ func (w *watch) NewWatcher() {
 func (w *watch) AddFolder(d string) {
 	err := w.Add(d)
 	if err != nil {
-		log.Println("Error Watching: ", d, err)
+		log.Println("error Watching: ", d, err)
 	}
 }
 
@@ -97,7 +100,6 @@ func Describe(event fsnotify.Event) {
 
 func (w *watch) Run() {
 	t := time.Now()
-	log.Println("here")
 	for {
 		select {
 		case event := <-w.Events:
@@ -109,12 +111,13 @@ func (w *watch) Run() {
 			f, err := os.Stat(event.Name)
 
 			if err != nil {
-				log.Println("Error watching ", err)
+				log.Println("error watching ", err)
 				break
 			}
 			if filepath.Ext(event.Name) == ".go" || filepath.Ext(event.Name) == ".tmpl" || f.IsDir() {
 				Describe(event)
 				w.KillProcess()
+				log.Println("restarting...")
 				go w.StartNewProcess()
 			}
 
@@ -125,7 +128,6 @@ func (w *watch) Run() {
 }
 
 func (w *watch) StartNewProcess() {
-	log.Println("lock")
 	w.cmd = exec.Command("go", w.args...)
 	w.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	w.cmd.Stdout = os.Stdout
@@ -133,60 +135,58 @@ func (w *watch) StartNewProcess() {
 
 	err := w.cmd.Start()
 	if err != nil {
-		log.Fatal("Unable to start process", err)
+		log.Fatal("unable to start process", err)
 	}
-	log.Println("unlock")
 }
 
 func (w *watch) KillProcess() {
-
 	pgid, err := syscall.Getpgid(w.cmd.Process.Pid)
-	log.Println(pgid)
 	if err == nil {
 		syscall.Kill(-pgid, syscall.SIGTERM)
 	}
-	err = w.cmd.Wait()
-	if err != nil {
-		log.Println("Process stopped", err)
-	}
 }
 
-func (w *watch) handleEvent(sig chan os.Signal) {
+func (w *watch) HandleSignal() {
 	<-sig
+	w.Closer()
+}
+
+func (w *watch) Closer() {
 	w.KillProcess()
 	w.Watcher.Close()
-	os.Exit(0)
+	log.Println("shutting down...")
+	done <- true
 }
 
 func main() {
-	log.Println(syscall.Getpgid(os.Getpid()))
-	defer func() {
-		if r := recover(); r != nil {
-			log.Println("Exiting App", r)
-			os.Exit(0)
-		}
-	}()
 
 	args := os.Args[1:]
-	sig := make(chan os.Signal)
 	signal.Notify(sig, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
+
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	w := &watch{
+	log.Println("starting gomon")
+
+	w = &watch{
 		Watcher: watcher,
 		args:    args,
 	}
-	go w.handleEvent(sig)
+
 	w.NewWatcher()
-	defer watcher.Close()
-	log.Println("Starting app")
+
 	go w.StartNewProcess()
-	log.Println("calling gor")
-	done := make(chan bool)
+
+	go w.HandleSignal()
+	defer func() {
+		if r := recover(); r != nil {
+			w.Closer()
+		}
+	}()
 	go w.Run()
+
 	<-done
 }
 
