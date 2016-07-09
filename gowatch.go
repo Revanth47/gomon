@@ -21,14 +21,12 @@ const (
 )
 
 type watch struct {
+	*fsnotify.Watcher
 	cmd  *exec.Cmd
 	args []string
-	*fsnotify.Watcher
 }
 
 var (
-	w = &watch{}
-
 	restart = make(chan bool)
 	done    = make(chan bool)
 	sig     = make(chan os.Signal)
@@ -60,6 +58,8 @@ func SubDirectories(p string) []string {
 	return filelist
 }
 
+// NewWatcher adds all valid directories to watch list
+// It assumes the current working directory to be the root of the project
 func (w *watch) NewWatcher() {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -98,6 +98,8 @@ func Describe(event fsnotify.Event) {
 	log.Println(desc, base)
 }
 
+// Run waits for watcher events sent by fsnotify
+// and triggers the restart process if required
 func (w *watch) Run() {
 	t := time.Now()
 	for {
@@ -116,9 +118,13 @@ func (w *watch) Run() {
 			}
 			if filepath.Ext(event.Name) == ".go" || filepath.Ext(event.Name) == ".tmpl" || f.IsDir() {
 				Describe(event)
-				w.KillProcess()
 				log.Println("restarting...")
+				w.KillProcess()
 				go w.StartNewProcess()
+
+				// wait till app restarts
+				// before responding to new changes
+				<-restart
 			}
 
 		case err := <-w.Errors:
@@ -127,6 +133,8 @@ func (w *watch) Run() {
 	}
 }
 
+// StartNewProcess starts the process as an independent(separate) process
+// instead of being a child process of gomon
 func (w *watch) StartNewProcess() {
 	w.cmd = exec.Command("go", w.args...)
 	w.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -137,8 +145,12 @@ func (w *watch) StartNewProcess() {
 	if err != nil {
 		log.Fatal("unable to start process", err)
 	}
+	restart <- true
 }
 
+// KillProcess kills the new process created by StartNewProcess
+// It kills the whole process group to ensure
+// all of its child processes are killed
 func (w *watch) KillProcess() {
 	pgid, err := syscall.Getpgid(w.cmd.Process.Pid)
 	if err == nil {
@@ -146,12 +158,16 @@ func (w *watch) KillProcess() {
 	}
 }
 
+// HandleSignal waits for program termination signal
+// to gracefully shutdown the process
 func (w *watch) HandleSignal() {
 	<-sig
-	w.Closer()
+	w.Stop()
 }
 
-func (w *watch) Closer() {
+// Stop terminates the watch process and kills the app(started by StartNewProcess())
+// and then shuts down
+func (w *watch) Stop() {
 	w.KillProcess()
 	w.Watcher.Close()
 	log.Println("shutting down...")
@@ -159,7 +175,6 @@ func (w *watch) Closer() {
 }
 
 func main() {
-
 	args := os.Args[1:]
 	signal.Notify(sig, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 
@@ -170,7 +185,7 @@ func main() {
 
 	log.Println("starting gomon")
 
-	w = &watch{
+	w := &watch{
 		Watcher: watcher,
 		args:    args,
 	}
@@ -178,11 +193,13 @@ func main() {
 	w.NewWatcher()
 
 	go w.StartNewProcess()
+	// wait till Process has Started successfully
+	<-restart
 
 	go w.HandleSignal()
 	defer func() {
 		if r := recover(); r != nil {
-			w.Closer()
+			w.Stop()
 		}
 	}()
 	go w.Run()
