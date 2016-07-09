@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -21,15 +22,15 @@ const (
 )
 
 type watch struct {
-	*fsnotify.Watcher
+	mu   sync.Mutex
 	cmd  *exec.Cmd
 	args []string
+	*fsnotify.Watcher
 }
 
 var (
-	restart = make(chan bool)
-	done    = make(chan bool)
-	sig     = make(chan os.Signal)
+	done = make(chan bool)
+	sig  = make(chan os.Signal)
 )
 
 // SubDirectories walks through the path(recursively)
@@ -105,7 +106,7 @@ func (w *watch) Run() {
 	for {
 		select {
 		case event := <-w.Events:
-			if time.Since(t) < threshold {
+			if time.Since(t) < threshold || event.Name == "" {
 				break
 			}
 
@@ -119,16 +120,15 @@ func (w *watch) Run() {
 			if filepath.Ext(event.Name) == ".go" || filepath.Ext(event.Name) == ".tmpl" || f.IsDir() {
 				Describe(event)
 				log.Println("restarting...")
+				w.mu.Lock()
 				w.KillProcess()
 				go w.StartNewProcess()
-
-				// wait till app restarts
-				// before responding to new changes
-				<-restart
 			}
 
 		case err := <-w.Errors:
-			log.Println("error:", err)
+			if err != nil {
+				log.Println("error:", err)
+			}
 		}
 	}
 }
@@ -136,6 +136,7 @@ func (w *watch) Run() {
 // StartNewProcess starts the process as an independent(separate) process
 // instead of being a child process of gomon
 func (w *watch) StartNewProcess() {
+	defer w.mu.Unlock()
 	w.cmd = exec.Command("go", w.args...)
 	w.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	w.cmd.Stdout = os.Stdout
@@ -145,7 +146,6 @@ func (w *watch) StartNewProcess() {
 	if err != nil {
 		log.Fatal("unable to start process", err)
 	}
-	restart <- true
 }
 
 // KillProcess kills the new process created by StartNewProcess
@@ -168,8 +168,8 @@ func (w *watch) HandleSignal() {
 // Stop terminates the watch process and kills the app(started by StartNewProcess())
 // and then shuts down
 func (w *watch) Stop() {
-	w.KillProcess()
 	w.Watcher.Close()
+	w.KillProcess()
 	log.Println("shutting down...")
 	done <- true
 }
@@ -191,10 +191,8 @@ func main() {
 	}
 
 	w.NewWatcher()
-
+	w.mu.Lock()
 	go w.StartNewProcess()
-	// wait till Process has Started successfully
-	<-restart
 
 	go w.HandleSignal()
 	defer func() {
