@@ -120,6 +120,8 @@ func (w *watch) Run() {
 			if filepath.Ext(event.Name) == ".go" || filepath.Ext(event.Name) == ".tmpl" || f.IsDir() {
 				Describe(event)
 				log.Println("restarting...")
+
+				// Lock w to ensure that restart is an atomic operation
 				w.mu.Lock()
 				w.KillProcess()
 				go w.StartNewProcess()
@@ -133,10 +135,9 @@ func (w *watch) Run() {
 	}
 }
 
-// StartNewProcess starts the process as an independent(separate) process
+// StartNewProcess starts the app as an separate process
 // instead of being a child process of gomon
 func (w *watch) StartNewProcess() {
-	defer w.mu.Unlock()
 	w.cmd = exec.Command("go", w.args...)
 	w.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	w.cmd.Stdout = os.Stdout
@@ -145,6 +146,16 @@ func (w *watch) StartNewProcess() {
 	err := w.cmd.Start()
 	if err != nil {
 		log.Fatal("unable to start process", err)
+	}
+
+	// After the app has restarted successfully
+	// Unlock w to continue execution of other threads
+	w.mu.Unlock()
+
+	err = w.cmd.Wait()
+	if !w.cmd.ProcessState.Success() {
+		log.Println("app crashed")
+		log.Println("waiting for changes before restarting")
 	}
 }
 
@@ -191,6 +202,7 @@ func main() {
 	}
 
 	w.NewWatcher()
+
 	w.mu.Lock()
 	go w.StartNewProcess()
 
