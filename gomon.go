@@ -73,10 +73,10 @@ func (w *watch) NewWatcher() {
 	}
 }
 
-func (w *watch) AddFolder(d string) {
-	err := w.Add(d)
+func (w *watch) AddFolder(p string) {
+	err := w.Add(p)
 	if err != nil {
-		log.Println("error Watching: ", d, err)
+		log.Println("error Watching: ", p, err)
 	}
 }
 
@@ -99,6 +99,17 @@ func Describe(event fsnotify.Event) {
 	log.Println(desc, base)
 }
 
+func (w *watch) HandleEvent(event fsnotify.Event) {
+	if event.Op&fsnotify.Create == fsnotify.Create {
+		f, err := os.Stat(event.Name)
+		if err != nil {
+			log.Println("err watching ", filepath.Base(event.Name))
+		} else if f.IsDir() && !ShouldIgnore(f.Name()) {
+			w.AddFolder(event.Name)
+		}
+	}
+}
+
 // Run waits for watcher events sent by fsnotify
 // and triggers the restart process if required
 func (w *watch) Run() {
@@ -119,6 +130,7 @@ func (w *watch) Run() {
 			}
 			if filepath.Ext(event.Name) == ".go" || filepath.Ext(event.Name) == ".tmpl" || f.IsDir() {
 				Describe(event)
+				w.HandleEvent(event)
 				log.Println("restarting...")
 
 				// Lock w to ensure that restart is an atomic operation
@@ -138,6 +150,10 @@ func (w *watch) Run() {
 // StartNewProcess starts the app as an separate process
 // instead of being a child process of gomon
 func (w *watch) StartNewProcess() {
+	// After the app has restarted successfully
+	// Unlock w to continue execution of other threads
+	defer w.mu.Unlock()
+
 	w.cmd = exec.Command("go", w.args...)
 	w.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	w.cmd.Stdout = os.Stdout
@@ -146,16 +162,6 @@ func (w *watch) StartNewProcess() {
 	err := w.cmd.Start()
 	if err != nil {
 		log.Fatal("unable to start process", err)
-	}
-
-	// After the app has restarted successfully
-	// Unlock w to continue execution of other threads
-	w.mu.Unlock()
-
-	err = w.cmd.Wait()
-	if !w.cmd.ProcessState.Success() && err != nil {
-		log.Println("app crashed")
-		log.Println("waiting for changes before restarting")
 	}
 }
 
