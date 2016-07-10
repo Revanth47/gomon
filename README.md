@@ -10,7 +10,7 @@ $ go get -u github.com/Revanth47/gomon
 
 ## Usage 
 ```bash
-$ gomon run main.go [args]       // instead of 'go' use 'gomon' and run it as usual
+$ gomon main.go [args]  
 ```
 
 ### Dependencies

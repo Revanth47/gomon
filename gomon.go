@@ -186,7 +186,8 @@ func (w *watch) Stop() {
 }
 
 func main() {
-	args := os.Args[1:]
+	args := append([]string{"run"}, os.Args[1:]...)
+
 	signal.Notify(sig, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 
 	watcher, err := fsnotify.NewWatcher()
