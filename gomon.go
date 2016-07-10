@@ -153,7 +153,7 @@ func (w *watch) StartNewProcess() {
 	w.mu.Unlock()
 
 	err = w.cmd.Wait()
-	if !w.cmd.ProcessState.Success() {
+	if !w.cmd.ProcessState.Success() && err != nil {
 		log.Println("app crashed")
 		log.Println("waiting for changes before restarting")
 	}
