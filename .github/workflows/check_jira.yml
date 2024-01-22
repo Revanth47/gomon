@@ -13,26 +13,28 @@ on:
 jobs:
   extract_ticket_id:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Display Event Payload
         run: echo "${{ toJson(github.event) }}"
+
       - name: Display Pull Request Number
         run: |
           echo "Pull Request Number: ${{ github.event.number }}"
-
           echo "Pull Request Number: ${{ github.event.pull_request.number }}"
 
       - name: Extract Jira Ticket ID
+        id: extract_jira
         run: |
           REPO_OWNER="${{ github.repository_owner }}"
           REPO_NAME="${{ github.event.repository.name }}"
           PR_NUMBER="${{ github.event.number }}"
           ACCESS_TOKEN="${{ secrets.GITHUB_TOKEN }}"
-
-          # remove this
-
-          # GitHub API endpoint to get the PR information
+            
+          # GitHub API endpoint to get PR information
           API_URL="https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/pulls/$PR_NUMBER"
 
           echo $API_URL
@@ -46,15 +48,16 @@ jobs:
 
           regex='[A-Z][A-Z0-9]+-[0-9]+'
           extracted_id=$(echo "$PR_TITLE" | grep -ioE "$regex" | head -n 1)
-          if [ -n "$extracted_id" ]; then
+
+          if [[ -n "$extracted_id" ]]; then
             echo "Jira ticket ID found in PR title: $extracted_id"
-            echo "::set-output name=jira_found::true"
-            echo "::set-output name=extracted_id::$extracted_id"
+            echo "jira_found=true" >> $GITHUB_ENV
+            echo "extracted_id=$extracted_id" >> $GITHUB_ENV
           else
             echo "No Jira ticket ID found in the PR title."
             echo "If you have recently updated the PR, please try re-running the workflow to extract the Jira ticket ID."
-            echo "::set-output name=jira_found::false"
-            echo "::set-output name=doc_link::https://docs.google.com/document/d/1HYOmXIDbm4I9e9Dj1EgEqJweuS3VQI1eJfxElTIimGw/"
+            echo "jira_found=false" >> $GITHUB_ENV
+            echo "doc_link=https://docs.google.com/document/d/1HYOmXIDbm4I9e9Dj1EgEqJweuS3VQI1eJfxElTIimGw/" >> $GITHUB_ENV
           fi
 
       - name: Post PR Comment
@@ -62,15 +65,15 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            if [ "${{ steps.extract_ticket_id.outputs.jira_found }}" == "true" ]; then
-              PR_COMMENT="Jira ticket ID found in PR title: ${{ steps.extract_ticket_id.outputs.extracted_id }}"
+            if [[ "$jira_found" == "true" ]]; then
+              PR_COMMENT="Jira ticket ID found in PR title: $extracted_id"
             else
-              PR_COMMENT="No Jira ticket ID found in the PR title.\n\nIf you have recently updated the PR, please try re-running the workflow to extract the Jira ticket ID.\n\nFor more information, please refer to our [FAQ document](${{ steps.extract_ticket_id.outputs.doc_link }})."
+              PR_COMMENT="No Jira ticket ID found in the PR title.\n\nIf you have recently updated the PR, please try re-running the workflow to extract the Jira ticket ID.\n\nFor more information, please refer to our [FAQ document]($doc_link)."
             fi
 
             API_URL="https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/issues/$PR_NUMBER/comments"
             curl -s -X POST -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" -d "{\"body\": \"$PR_COMMENT\"}" $API_URL
 
       - name: Fail if Jira not found
-        if: ${{ steps.extract_ticket_id.outputs.jira_found == 'false' }}
+        if: env.jira_found == 'false'
         run: exit 1 # Fail the workflow if Jira ticket is not found
