@@ -18,24 +18,22 @@ jobs:
         shell: bash
 
     steps:
-      - name: Display Event Payload
-        run: echo "${{ toJson(github.event) }}"
+      - uses: jwalton/gh-find-current-pr@v1
+        id: findPr
 
       - name: Display Pull Request Number
         run: |
-          echo "Pull Request Number: ${{ github.event.number }}"
-          echo "Pull Request Number: ${{ github.event.pull_request.number }}"
+          echo "Pull Request Number: ${{ steps.findPr.outputs.number }}"
 
       - name: Extract Jira Ticket ID
         id: extract_jira
         run: |
           set -x
-
           REPO_OWNER="${{ github.repository_owner }}"
           REPO_NAME="${{ github.event.repository.name }}"
-          PR_NUMBER="${{ github.event.number }}"
+          PR_NUMBER="${{ steps.findPr.outputs.number }}"
           ACCESS_TOKEN="${{ secrets.GITHUB_TOKEN }}"
-          # remove this 1 
+          # remove this 4
           # GitHub API endpoint to get PR information
           API_URL="https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/pulls/$PR_NUMBER"
 
@@ -54,27 +52,25 @@ jobs:
           if [[ -n "$extracted_id" ]]; then
             echo "Jira ticket ID found in PR title: $extracted_id"
             echo "jira_found=true" >> $GITHUB_ENV
-            echo "extracted_id=$extracted_id" >> $GITHUB_ENV
+            PR_COMMENT="Jira ticket ID found in PR title: $extracted_id"
+            echo "pr_comment=$PR_COMMENT" >> $GITHUB_ENV
           else
             echo "No Jira ticket ID found in the PR title."
             echo "If you have recently updated the PR, please try re-running the workflow to extract the Jira ticket ID."
             echo "jira_found=false" >> $GITHUB_ENV
-            echo "doc_link=https://docs.google.com/document/d/1HYOmXIDbm4I9e9Dj1EgEqJweuS3VQI1eJfxElTIimGw/" >> $GITHUB_ENV
+            DOC_LINK="https://docs.google.com/document/d/1HYOmXIDbm4I9e9Dj1EgEqJweuS3VQI1eJfxElTIimGw/"
+            PR_COMMENT="No Jira ticket ID found in the PR title.\n\nIf you have recently updated the PR, please try re-running the workflow to extract the Jira ticket ID.\n\nFor more information, please refer to our [FAQ document]($DOC_LINK)."
+            echo "pr_comment=$PR_COMMENT" >> $GITHUB_ENV
           fi
 
-      - name: Post PR Comment
-        uses: actions/github-script@v6
+      - name: Comment on PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run: |
-            if [[ "$jira_found" == "true" ]]; then
-              PR_COMMENT="Jira ticket ID found in PR title: $extracted_id"
-            else
-              PR_COMMENT="No Jira ticket ID found in the PR title.\n\nIf you have recently updated the PR, please try re-running the workflow to extract the Jira ticket ID.\n\nFor more information, please refer to our [FAQ document]($doc_link)."
-            fi
-
-            API_URL="https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/issues/$PR_NUMBER/comments"
-            curl -s -X POST -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" -d "{\"body\": \"$PR_COMMENT\"}" $API_URL
+          header: JIRA Ticket Check
+          number: ${{ steps.findPr.outputs.pr }}
+          message: ${{ env.pr_comment }}
 
       - name: Fail if Jira not found
         if: env.jira_found == 'false'
