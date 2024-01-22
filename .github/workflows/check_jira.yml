@@ -29,6 +29,8 @@ jobs:
       - name: Extract Jira Ticket ID
         id: extract_jira
         run: |
+          set -x
+
           REPO_OWNER="${{ github.repository_owner }}"
           REPO_NAME="${{ github.event.repository.name }}"
           PR_NUMBER="${{ github.event.number }}"
