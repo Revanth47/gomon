@@ -33,7 +33,7 @@ jobs:
           REPO_NAME="${{ github.event.repository.name }}"
           PR_NUMBER="${{ github.event.number }}"
           ACCESS_TOKEN="${{ secrets.GITHUB_TOKEN }}"
-            
+          # remove this  
           # GitHub API endpoint to get PR information
           API_URL="https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/pulls/$PR_NUMBER"
 
