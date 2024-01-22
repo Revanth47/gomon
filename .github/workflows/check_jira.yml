@@ -64,7 +64,7 @@ jobs:
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
+          run: |
             if [[ "$jira_found" == "true" ]]; then
               PR_COMMENT="Jira ticket ID found in PR title: $extracted_id"
             else
