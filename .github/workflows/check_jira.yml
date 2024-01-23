@@ -31,7 +31,7 @@ jobs:
           PR_NUMBER="${{ steps.findPr.outputs.number }}"
           ACCESS_TOKEN="${{ secrets.GITHUB_TOKEN }}"
 
-          # remove this 4
+          # remove this 1
           # GitHub API endpoint to get PR information
           API_URL="https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/pulls/$PR_NUMBER"
 
@@ -56,12 +56,8 @@ jobs:
             echo "If you have recently updated the PR, please try re-running the workflow to extract the Jira ticket ID."
             echo "jira_found=false" >> $GITHUB_ENV
             DOC_LINK="https://docs.google.com/document/d/1HYOmXIDbm4I9e9Dj1EgEqJweuS3VQI1eJfxElTIimGw/"
-            PR_COMMENT="No Jira ticket ID found in the PR title.\n\nIf you have recently updated the PR, please try re-running the workflow to extract the Jira ticket ID.\n\nFor more information, please refer to our [FAQ document]($DOC_LINK)."
+            PR_COMMENT="No Jira ticket ID found in the PR title. If you have recently updated the PR, please try re-running the workflow to extract the Jira ticket ID. For more information, please refer to our [FAQ document]($DOC_LINK)."
           fi
-
-          # Encode newline characters
-          PR_COMMENT_ENCODED=$(echo -n "$PR_COMMENT" | base64)
-          echo "pr_comment=$PR_COMMENT_ENCODED" >> $GITHUB_ENV
 
       - name: Comment on PR
         uses: marocchino/sticky-pull-request-comment@v2
