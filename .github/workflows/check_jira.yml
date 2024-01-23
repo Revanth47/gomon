@@ -13,9 +13,6 @@ on:
 jobs:
   extract_ticket_id:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
 
     steps:
       - uses: jwalton/gh-find-current-pr@v1
@@ -33,7 +30,8 @@ jobs:
           REPO_NAME="${{ github.event.repository.name }}"
           PR_NUMBER="${{ steps.findPr.outputs.number }}"
           ACCESS_TOKEN="${{ secrets.GITHUB_TOKEN }}"
-          # remove this 4
+
+          # remove this 1
           # GitHub API endpoint to get PR information
           API_URL="https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/pulls/$PR_NUMBER"
 
