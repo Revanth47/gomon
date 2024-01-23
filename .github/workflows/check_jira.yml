@@ -26,6 +26,7 @@ jobs:
           PR_NUMBER="${{ steps.findPr.outputs.number }}"
           ACCESS_TOKEN="${{ secrets.GITHUB_TOKEN }}"
 
+          # Remove this 1
           # GitHub API endpoint to get PR information
           API_URL="https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/pulls/$PR_NUMBER"
 
